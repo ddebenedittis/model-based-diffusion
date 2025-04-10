@@ -21,11 +21,17 @@ MBD outperforms existing methods (including RL) in terms of sample efficiency an
 
 ## Installation
 
-To install the required packages, run the following command:
+To install the required packages without `cuda` support, run the following command:
 
 ```bash
 git clone --depth 1 git@github.com:LeCAR-Lab/model-based-diffusion.git
 pip install -e .
+```
+
+To install `mbd` with `cuda` support, run the following command:
+
+```bash
+pip install -e ".[cuda12]"
 ```
 
 ## Usage
@@ -35,8 +41,7 @@ pip install -e .
 To run model-based diffusion to optimize a trajectory, run the following command:
 
 ```bash
-cd mbd/planners
-python mbd_planner.py --env_name $ENV_NAME
+python mbd/planners/mbd_planner.py --env_name $ENV_NAME
 ```
 
 where `$ENV_NAME` is the name of the environment, you can choose from `hopper`, `halfcheetah`, `walker2d`, `ant`, `humanoidrun`, `humanoidstandup`, `humanoidtrack`, `car2d`, `pushT`.
@@ -44,8 +49,7 @@ where `$ENV_NAME` is the name of the environment, you can choose from `hopper`, 
 To run model-based diffusion combined with demonstrations, run the following command:
 
 ```bash
-cd mbd/planners
-python mbd_planner.py --env_name $ENV_NAME --enable_demos
+python mbd/planners/mbd_planner.py --env_name $ENV_NAME --enable_demo
 ```
 
 Currently, only the `humanoidtrack`, `car2d` support demonstrations.
@@ -53,15 +57,13 @@ Currently, only the `humanoidtrack`, `car2d` support demonstrations.
 To run multiple seeds, run the following command:
 
 ```bash
-cd mbd/scripts
-python run_mbd.py --env_name $ENV_NAME
+python mbd/scripts/run_mbd.py --env_name $ENV_NAME
 ```
 
 To visualize the diffusion process, run the following command:
 
 ```bash
-cd mbd/scripts
-python vis_diffusion.py --env_name $ENV_NAME
+python mbd/scripts/vis_diffusion.py --env_name $ENV_NAME
 ```
 
 Please make sure you have run the planner first to generate the data.
@@ -71,8 +73,7 @@ Please make sure you have run the planner first to generate the data.
 To run model-based diffusion for black-box optimization, run the following command:
 
 ```bash
-cd mbd/blackbox
-python mbd_opt.py
+python mbd/blackbox/mbd_opt.py
 ```
 
 ### Other Baselines
@@ -80,15 +81,13 @@ python mbd_opt.py
 To run RL-based baselines, run the following command:
 
 ```bash
-cd mbd/rl
-python train_brax.py --env_name $ENV_NAME
+python mbd/rl/train_brax.py --env_name $ENV_NAME
 ```
 
 To run other zeroth order trajectory optimization baselines, run the following command:
 
 ```bash
-cd mbd/planners
-python path_integral.py --env_name $ENV_NAME --mode $MODE
+python mbd/planners/path_integral.py --env_name $ENV_NAME --update_method $MODE
 ```
 
 where `$MODE` is the mode of the planner, you can choose from `mppi`, `cem`, `cma-es`.

@@ -4,9 +4,10 @@ setup(
     name='mbd',
     author="Chaoyi Pan",
     author_email="chaoyip@andrew.cmu.edu",
-    packages=find_packages(include=["mbd"]),
+    packages=find_packages(include=["mbd", "mbd.*"]),
     version='0.0.1',
     install_requires=[
+        'brax',
         'gym', 
         'pandas', 
         'seaborn', 
@@ -22,5 +23,8 @@ setup(
         'distrax', 
         'gputil', 
         'jaxopt'
-    ]
+    ],
+    extras_require={
+        'cuda12': ['jax[cuda12]'],
+    },
 )
