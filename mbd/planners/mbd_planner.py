@@ -39,9 +39,17 @@ class Args:
     ki: float = 0.1         # integral gain
     kd: float = 0.05        # derivative gain
     gamma: float = 0.95     # integral gain decay per step
+    # Underdamped Langevin Dynamics
+    underdamped: bool = False      # enable momentum-augmented reverse diffusion
+    friction: float = 0.5          # damping coefficient γ (0 = no friction, ∞ = overdamped)
+    mass: float = 1.0              # effective mass (scales velocity inertia)
+    velocity_clip: float = 2.0     # max velocity magnitude (prevents runaway)
 
 
 def run_diffusion(args: Args):
+
+    if args.pid and args.underdamped:
+        raise ValueError("Cannot use both --pid and --underdamped. Choose one.")
 
     rng = jax.random.PRNGKey(seed=args.seed)
 
@@ -104,6 +112,8 @@ def run_diffusion(args: Args):
     def reverse_once(carry, unused):
         if args.pid:
             i, rng, Ybar_i, I_accum, s_prev = carry
+        elif args.underdamped:
+            i, rng, Ybar_i, velocity = carry
         else:
             i, rng, Ybar_i = carry
         Yi = Ybar_i * jnp.sqrt(alphas_bar[i])
@@ -146,6 +156,11 @@ def run_diffusion(args: Args):
             ki_decayed = args.ki * (args.gamma ** step)
             u = args.kp * P + ki_decayed * I_new + args.kd * D
             Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + (1.0 - alphas_bar[i]) * u)
+        elif args.underdamped:
+            score_force = (1.0 - alphas_bar[i]) * score
+            velocity_new = (1.0 - args.friction) * velocity + (1.0 / args.mass) * score_force
+            velocity_new = jnp.clip(velocity_new, -args.velocity_clip, args.velocity_clip)
+            Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + velocity_new)
         else:
             Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + (1.0 - alphas_bar[i]) * score)
 
@@ -153,6 +168,8 @@ def run_diffusion(args: Args):
 
         if args.pid:
             return (i - 1, rng, Ybar_im1, I_new, score), rews.mean()
+        elif args.underdamped:
+            return (i - 1, rng, Ybar_im1, velocity_new), rews.mean()
         else:
             return (i - 1, rng, Ybar_im1), rews.mean()
 
@@ -160,23 +177,30 @@ def run_diffusion(args: Args):
     def reverse(YN, rng):
         Yi = YN
         Ybars = []
+        rew_history = []
         if args.pid:
             I_accum = jnp.zeros_like(YN)
             s_prev = jnp.zeros_like(YN)
+        elif args.underdamped:
+            velocity = jnp.zeros_like(YN)
         with tqdm(range(args.Ndiffuse - 1, 0, -1), desc="Diffusing") as pbar:
             for i in pbar:
                 if args.pid:
                     carry_once = (i, rng, Yi, I_accum, s_prev)
                     (i, rng, Yi, I_accum, s_prev), rew = reverse_once(carry_once, None)
+                elif args.underdamped:
+                    carry_once = (i, rng, Yi, velocity)
+                    (i, rng, Yi, velocity), rew = reverse_once(carry_once, None)
                 else:
                     carry_once = (i, rng, Yi)
                     (i, rng, Yi), rew = reverse_once(carry_once, None)
                 Ybars.append(Yi)
+                rew_history.append(float(rew))
                 pbar.set_postfix({"rew": f"{rew:.2e}"})
-        return jnp.array(Ybars)
+        return jnp.array(Ybars), rew_history
 
     rng_exp, rng = jax.random.split(rng)
-    Yi = reverse(YN, rng_exp)
+    Yi, rew_history = reverse(YN, rng_exp)
     if not args.not_render:
         path = f"{mbd.__path__[0]}/../results/{args.env_name}"
         if not os.path.exists(path):
@@ -207,9 +231,9 @@ def run_diffusion(args: Args):
     rewss_final, _ = rollout_us(state_init, Yi[-1])
     rew_final = rewss_final.mean()
 
-    return rew_final
+    return rew_final, rew_history
 
 
 if __name__ == "__main__":
-    rew_final = run_diffusion(args=tyro.cli(Args))
+    rew_final, _ = run_diffusion(args=tyro.cli(Args))
     print(f"final reward = {rew_final:.2e}")

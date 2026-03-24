@@ -131,23 +131,24 @@ def run_path_integral(args: Args):
         sigma = 1.0
         mu_0t = mu_0T
         mu_0ts = []
+        rew_history = []
         with tqdm(range(args.Nrefine - 1, 0, -1), desc="Path Integrating") as pbar:
             for t in pbar:
                 carry_once = (t, rng, mu_0t, sigma)
                 (t, rng, mu_0t, sigma), rew = update_once(carry_once, None)
                 mu_0ts.append(mu_0t)
-                # Update the progress bar's suffix to show the current reward
+                rew_history.append(float(rew))
                 pbar.set_postfix({"rew": f"{rew:.2e}"})
-        return mu_0ts
+        return mu_0ts, rew_history
 
     rng_exp, rng = jax.random.split(rng)
-    mu_0ts = update(mu_0T, rng_exp)
+    mu_0ts, rew_history = update(mu_0T, rng_exp)
     mu_0ts = jnp.array(mu_0ts)
     rew_final = eval_us(state_init, mu_0ts[-1]).mean()
 
-    return rew_final
+    return rew_final, rew_history
 
 
 if __name__ == "__main__":
-    rew = run_path_integral(args=tyro.cli(Args))
+    rew, _ = run_path_integral(args=tyro.cli(Args))
     print(f"rew: {rew:.2e}")
