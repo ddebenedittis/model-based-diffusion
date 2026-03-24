@@ -98,7 +98,7 @@ def run_path_integral(args: Args):
     reset_env_jit = jax.jit(env.reset)
     eval_us = jax.jit(functools.partial(mbd.utils.eval_us, step_env_jit))
     render_us = functools.partial(
-        mbd.utils.render_us, step_env_jit, env.sys.replace(dt=env.dt)
+        mbd.utils.render_us, step_env_jit, env.sys.tree_replace({"opt.timestep": env.dt})
     )
 
     rng, rng_reset = jax.random.split(rng)  # NOTE: rng_reset should never be changed.

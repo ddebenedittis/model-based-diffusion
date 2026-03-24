@@ -33,6 +33,12 @@ class Args:
     beta0: float = 1e-4  # initial beta
     betaT: float = 1e-2  # final beta
     enable_demo: bool = False
+    # PID Langevin Dynamics
+    pid: bool = False       # enable PID-controlled score update
+    kp: float = 1.0         # proportional gain
+    ki: float = 0.1         # integral gain
+    kd: float = 0.05        # derivative gain
+    gamma: float = 0.95     # integral gain decay per step
 
 
 def run_diffusion(args: Args):
@@ -96,7 +102,10 @@ def run_diffusion(args: Args):
 
     @jax.jit
     def reverse_once(carry, unused):
-        i, rng, Ybar_i = carry
+        if args.pid:
+            i, rng, Ybar_i, I_accum, s_prev = carry
+        else:
+            i, rng, Ybar_i = carry
         Yi = Ybar_i * jnp.sqrt(alphas_bar[i])
 
         # sample from q_i
@@ -128,22 +137,41 @@ def run_diffusion(args: Args):
         Ybar = jnp.einsum("n,nij->ij", weights, Y0s)  # NOTE: update only with reward
 
         score = 1 / (1.0 - alphas_bar[i]) * (-Yi + jnp.sqrt(alphas_bar[i]) * Ybar)
-        Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + (1.0 - alphas_bar[i]) * score)
+
+        if args.pid:
+            P = score
+            step = args.Ndiffuse - 1 - i          # counts 0, 1, 2, ...
+            I_new = (I_accum * step + score) / (step + 1)  # running average
+            D = score - s_prev
+            ki_decayed = args.ki * (args.gamma ** step)
+            u = args.kp * P + ki_decayed * I_new + args.kd * D
+            Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + (1.0 - alphas_bar[i]) * u)
+        else:
+            Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + (1.0 - alphas_bar[i]) * score)
 
         Ybar_im1 = Yim1 / jnp.sqrt(alphas_bar[i - 1])
 
-        return (i - 1, rng, Ybar_im1), rews.mean()
+        if args.pid:
+            return (i - 1, rng, Ybar_im1, I_new, score), rews.mean()
+        else:
+            return (i - 1, rng, Ybar_im1), rews.mean()
 
     # run reverse
     def reverse(YN, rng):
         Yi = YN
         Ybars = []
+        if args.pid:
+            I_accum = jnp.zeros_like(YN)
+            s_prev = jnp.zeros_like(YN)
         with tqdm(range(args.Ndiffuse - 1, 0, -1), desc="Diffusing") as pbar:
             for i in pbar:
-                carry_once = (i, rng, Yi)
-                (i, rng, Yi), rew = reverse_once(carry_once, None)
+                if args.pid:
+                    carry_once = (i, rng, Yi, I_accum, s_prev)
+                    (i, rng, Yi, I_accum, s_prev), rew = reverse_once(carry_once, None)
+                else:
+                    carry_once = (i, rng, Yi)
+                    (i, rng, Yi), rew = reverse_once(carry_once, None)
                 Ybars.append(Yi)
-                # Update the progress bar's suffix to show the current reward
                 pbar.set_postfix({"rew": f"{rew:.2e}"})
         return jnp.array(Ybars)
 
