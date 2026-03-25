@@ -11,7 +11,7 @@ class Args:
     algo: str = "mbd"  # path_integral, mbd
     update_method: str = "mppi"  # softmax, cma-es, cem
     mode: str = "seed"  # temp
-    env_name: str = "ant"
+    env: str = "ant"
 
 
 def run_multiple_seed(args: Args):
@@ -21,12 +21,12 @@ def run_multiple_seed(args: Args):
         t0 = time()
         if args.algo == "path_integral":
             local_args = mbd.planners.path_integral.Args(
-                seed=seed, env_name=args.env_name, update_method=args.update_method
+                seed=seed, env=args.env, update_method=args.update_method
             )
             rew = mbd.planners.path_integral.run_path_integral(local_args)
         elif args.algo == "mbd":
             local_args = mbd.planners.mbd_planner.Args(
-                seed=seed, env_name=args.env_name, not_render=True
+                seed=seed, env=args.env, not_render=True
             )
             rew = mbd.planners.mbd_planner.run_diffusion(local_args)
         else:
@@ -45,13 +45,13 @@ def run_multiple_temp(args: Args):
     for temp in temps:
         if args.algo == "path_integral":
             local_args = mbd.planners.path_integral.Args(
-                seed=0, env_name=args.env_name, temp_sample=temp
+                seed=0, env=args.env, temp_sample=temp
             )
             rew = mbd.planners.path_integral.run_path_integral(local_args)
         elif args.algo == "mbd":
             local_args = mbd.planners.mbd_planner.Args(
                 seed=0,
-                env_name=args.env_name,
+                env=args.env,
                 temp_sample=temp,
                 not_render=True,
                 disable_recommended_params=True,

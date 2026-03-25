@@ -20,7 +20,7 @@ class Args:
     disable_recommended_params: bool = False
     update_method: str = "mppi"  # mppi, cma-es, cem
     # env
-    env_name: str = (
+    env: str = (
         "ant"  # "humanoidstandup", "ant", "halfcheetah", "hopper", "walker2d"
     )
     # diffusion
@@ -85,12 +85,12 @@ def run_path_integral(args: Args):
         "pushT": 40,
     }
     if not args.disable_recommended_params:
-        args.temp_sample = temp_recommend.get(args.env_name, args.temp_sample)
-        args.Nrefine = Nrefine_recommend.get(args.env_name, args.Nrefine)
-        args.Nsample = Nsample_recommend.get(args.env_name, args.Nsample)
-        args.Hsample = Hsample_recommend.get(args.env_name, args.Hsample)
+        args.temp_sample = temp_recommend.get(args.env, args.temp_sample)
+        args.Nrefine = Nrefine_recommend.get(args.env, args.Nrefine)
+        args.Nsample = Nsample_recommend.get(args.env, args.Nsample)
+        args.Hsample = Hsample_recommend.get(args.env, args.Hsample)
         print(f"override temp_sample to {args.temp_sample}")
-    env = mbd.envs.get_env(args.env_name)
+    env = mbd.envs.get_env(args.env)
     Nx = env.observation_size
     Nu = env.action_size
     # env functions

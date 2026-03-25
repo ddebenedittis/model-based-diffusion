@@ -17,12 +17,12 @@ import mbd
 
 @dataclass
 class Args:
-    env_name: str = "halfcheetah"
+    env: str = "halfcheetah"
 
 
 args = tyro.cli(Args)
 
-env = mbd.envs.get_env(args.env_name)
+env = mbd.envs.get_env(args.env)
 rng = jax.random.PRNGKey(seed=0)
 rng, rng_reset = jax.random.split(rng)
 state = jax.jit(env.reset)(rng=rng_reset)
@@ -173,7 +173,7 @@ train_fn = {
         batch_size=1024,
         seed=1,
     ),
-}[args.env_name]
+}[args.env]
 
 xdata, ydata = [], []
 times = [datetime.now()]
@@ -191,7 +191,7 @@ make_inference_fn, params, _ = train_fn(environment=env, progress_fn=progress)
 print(f"time to jit: {times[1] - times[0]}")
 print(f"time to train: {times[-1] - times[1]}")
 
-path = f"{mbd.__path__[0]}/../results/{args.env_name}"
+path = f"{mbd.__path__[0]}/../results/{args.env}"
 if not os.path.exists(path):
     os.makedirs(path)
 model.save_params(f"{path}/params", params)
@@ -210,7 +210,7 @@ jit_env_step = jax.jit(env.step)
 jit_inference_fn = jax.jit(inference_fn)
 
 rew = []
-Nstep = 40 if args.env_name == "pushT" else 50
+Nstep = 40 if args.env == "pushT" else 50
 for i in range(8):
     rng, rng_i = jax.random.split(rng)
     state = jit_env_reset(rng=rng_i)

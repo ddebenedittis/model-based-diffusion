@@ -4,6 +4,7 @@ import jax
 from jax import numpy as jnp
 from jax import config
 from dataclasses import dataclass
+from typing import Literal
 import tyro
 from tqdm import tqdm
 from matplotlib import pyplot as plt
@@ -22,7 +23,7 @@ class Args:
     disable_recommended_params: bool = False
     not_render: bool = False
     # env
-    env_name: str = (
+    env: str = (
         "ant"  # "humanoidstandup", "ant", "halfcheetah", "hopper", "walker2d", "car2d"
     )
     # diffusion
@@ -35,6 +36,7 @@ class Args:
     enable_demo: bool = False
     # PID Langevin Dynamics
     pid: bool = False       # enable PID-controlled score update
+    pid_schedule: Literal["none", "snr", "ess"] = "none"  # gain scheduling mode (implies --pid)
     kp: float = 1.0         # proportional gain
     ki: float = 0.1         # integral gain
     kd: float = 0.05        # derivative gain
@@ -44,10 +46,18 @@ class Args:
     friction: float = 0.5          # damping coefficient γ (0 = no friction, ∞ = overdamped)
     mass: float = 1.0              # effective mass (scales velocity inertia)
     velocity_clip: float = 2.0     # max velocity magnitude (prevents runaway)
+    # Smoothness penalties
+    smooth_fd: bool = False            # enable finite-difference smoothness penalty
+    smooth_fd_weight: float = 0.1      # weight for FD penalty
+    smooth_bw: bool = False            # enable FFT high-frequency penalty
+    smooth_bw_weight: float = 0.1      # weight for FFT penalty
+    smooth_bw_cutoff: float = 0.3      # fraction of freq bins considered "high" (0=all, 1=none)
 
 
 def run_diffusion(args: Args):
 
+    if args.pid_schedule != "none":
+        args.pid = True  # pid_schedule implies pid
     if args.pid and args.underdamped:
         raise ValueError("Cannot use both --pid and --underdamped. Choose one.")
 
@@ -76,12 +86,12 @@ def run_diffusion(args: Args):
         "pushT": 40,
     }
     if not args.disable_recommended_params:
-        args.temp_sample = temp_recommend.get(args.env_name, args.temp_sample)
-        args.Ndiffuse = Ndiffuse_recommend.get(args.env_name, args.Ndiffuse)
-        args.Nsample = Nsample_recommend.get(args.env_name, args.Nsample)
-        args.Hsample = Hsample_recommend.get(args.env_name, args.Hsample)
+        args.temp_sample = temp_recommend.get(args.env, args.temp_sample)
+        args.Ndiffuse = Ndiffuse_recommend.get(args.env, args.Ndiffuse)
+        args.Nsample = Nsample_recommend.get(args.env, args.Nsample)
+        args.Hsample = Hsample_recommend.get(args.env, args.Hsample)
         print(f"override temp_sample to {args.temp_sample}")
-    env = mbd.envs.get_env(args.env_name)
+    env = mbd.envs.get_env(args.env)
     Nx = env.observation_size
     Nu = env.action_size
     # env functions
@@ -127,6 +137,20 @@ def run_diffusion(args: Args):
         # esitimate mu_0tm1
         rewss, qs = jax.vmap(rollout_us, in_axes=(None, 0))(state_init, Y0s)
         rews = rewss.mean(axis=-1)
+
+        # Smoothness penalties
+        if args.smooth_fd:
+            diffs = Y0s[:, 1:, :] - Y0s[:, :-1, :]
+            fd_penalty = (diffs ** 2).sum(axis=(-1, -2))
+            rews = rews - args.smooth_fd_weight * fd_penalty
+
+        if args.smooth_bw:
+            freqs = jnp.fft.rfft(Y0s, axis=1)
+            n_freq = freqs.shape[1]
+            cutoff_idx = max(1, int(n_freq * args.smooth_bw_cutoff))
+            high_freq_energy = (jnp.abs(freqs[:, cutoff_idx:, :]) ** 2).sum(axis=(-1, -2))
+            rews = rews - args.smooth_bw_weight * high_freq_energy
+
         rew_std = rews.std()
         rew_std = jnp.where(rew_std < 1e-4, 1.0, rew_std)
         rew_mean = rews.mean()
@@ -153,8 +177,25 @@ def run_diffusion(args: Args):
             step = args.Ndiffuse - 1 - i          # counts 0, 1, 2, ...
             I_new = (I_accum * step + score) / (step + 1)  # running average
             D = score - s_prev
-            ki_decayed = args.ki * (args.gamma ** step)
-            u = args.kp * P + ki_decayed * I_new + args.kd * D
+            if args.pid_schedule == "snr":
+                # SNR-based gain scheduling: ramp gains with signal clarity
+                snr_i = alphas_bar[i] / (1.0 - alphas_bar[i] + 1e-8)
+                snr_weight = snr_i / (1.0 + snr_i)  # ∈ [0,1]
+                kp_t = args.kp
+                ki_t = args.ki * snr_weight
+                kd_t = args.kd * snr_weight
+            elif args.pid_schedule == "ess":
+                # ESS-based gain scheduling: adapt to optimization state
+                ess = 1.0 / jnp.sum(weights ** 2)
+                ess_weight = ess / args.Nsample
+                kp_t = args.kp
+                ki_t = args.ki * ess_weight
+                kd_t = args.kd * ess_weight
+            else:
+                kp_t = args.kp
+                ki_t = args.ki * (args.gamma ** step)
+                kd_t = args.kd
+            u = kp_t * P + ki_t * I_new + kd_t * D
             Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + (1.0 - alphas_bar[i]) * u)
         elif args.underdamped:
             score_force = (1.0 - alphas_bar[i]) * score
@@ -202,11 +243,11 @@ def run_diffusion(args: Args):
     rng_exp, rng = jax.random.split(rng)
     Yi, rew_history = reverse(YN, rng_exp)
     if not args.not_render:
-        path = f"{mbd.__path__[0]}/../results/{args.env_name}"
+        path = f"{mbd.__path__[0]}/../results/{args.env}"
         if not os.path.exists(path):
             os.makedirs(path)
         jnp.save(f"{path}/mu_0ts.npy", Yi)
-        if args.env_name == "car2d":
+        if args.env == "car2d":
             fig, ax = plt.subplots(1, 1, figsize=(3, 3))
             # rollout
             xs = jnp.array([state_init.pipeline_state])
