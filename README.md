@@ -1,5 +1,7 @@
 # Model-Based Diffusion for Trajectory Optimization
 
+> Fork of [LeCAR-Lab/model-based-diffusion](https://github.com/LeCAR-Lab/model-based-diffusion). Used as a submodule by the [mrmbd](../README.md) project.
+
 <div align="center">
 
 [[Website]](https://lecar-lab.github.io/mbd/)
@@ -14,9 +16,7 @@
 
 </div>
 
-This repository contains the code for the paper "Model-based Diffusion for Trajectory Optimization".
-
-Model-based diffusion (MBD) is a novel **diffusion-based trajectory optimization** framework that employs a **dynamics model** to approximate the score function. 
+Model-based diffusion (MBD) is a **diffusion-based trajectory optimization** framework that employs a **dynamics model** to approximate the score function.
 MBD outperforms existing methods (including RL) in terms of sample efficiency and generalization.
 
 ## Installation
@@ -24,7 +24,7 @@ MBD outperforms existing methods (including RL) in terms of sample efficiency an
 To install the required packages without `cuda` support, run the following command:
 
 ```bash
-git clone --depth 1 git@github.com:LeCAR-Lab/model-based-diffusion.git
+git clone --depth 1 https://github.com/ddebenedittis/model-based-diffusion.git
 pip install -e .
 ```
 
@@ -34,63 +34,65 @@ To install `mbd` with `cuda` support, run the following command:
 pip install -e ".[cuda12]"
 ```
 
+## Project Structure
+
+```
+mbd/
+├── envs/          # Brax-based environments (hopper, ant, humanoid, car2d, pushT, ...)
+├── planners/      # Trajectory optimization (MBD planner, path integral baselines)
+├── blackbox/      # Black-box optimization variants
+├── rl/            # RL baselines (Brax training)
+├── scripts/       # Multi-seed runs & diffusion visualization
+└── utils.py       # Shared utilities
+```
+
 ## Usage
 
-### Model-based Diffusion for Trajectory Optimization
-
-To run model-based diffusion to optimize a trajectory, run the following command:
+### Trajectory Optimization
 
 ```bash
 python mbd/planners/mbd_planner.py --env_name $ENV_NAME
 ```
 
-where `$ENV_NAME` is the name of the environment, you can choose from `hopper`, `halfcheetah`, `walker2d`, `ant`, `humanoidrun`, `humanoidstandup`, `humanoidtrack`, `car2d`, `pushT`.
+Available environments: `hopper`, `halfcheetah`, `walker2d`, `ant`, `humanoidrun`, `humanoidstandup`, `humanoidtrack`, `car2d`, `pushT`.
 
-To run model-based diffusion combined with demonstrations, run the following command:
+With demonstrations (supported for `humanoidtrack`, `car2d`):
 
 ```bash
 python mbd/planners/mbd_planner.py --env_name $ENV_NAME --enable_demo
 ```
 
-Currently, only the `humanoidtrack`, `car2d` support demonstrations.
-
-To run multiple seeds, run the following command:
+Multi-seed runs:
 
 ```bash
 python mbd/scripts/run_mbd.py --env_name $ENV_NAME
 ```
 
-To visualize the diffusion process, run the following command:
+Visualize the diffusion process (requires a completed planner run):
 
 ```bash
 python mbd/scripts/vis_diffusion.py --env_name $ENV_NAME
 ```
 
-Please make sure you have run the planner first to generate the data.
-
-### Model-based Diffusion for Black-box Optimization
-
-To run model-based diffusion for black-box optimization, run the following command:
+### Black-box Optimization
 
 ```bash
 python mbd/blackbox/mbd_opt.py
 ```
 
-### Other Baselines
+### Baselines
 
-To run RL-based baselines, run the following command:
+RL baseline:
 
 ```bash
 python mbd/rl/train_brax.py --env_name $ENV_NAME
 ```
 
-To run other zeroth order trajectory optimization baselines, run the following command:
+Zeroth-order trajectory optimization (MPPI, CEM, CMA-ES):
 
 ```bash
 python mbd/planners/path_integral.py --env_name $ENV_NAME --update_method $MODE
 ```
-
-where `$MODE` is the mode of the planner, you can choose from `mppi`, `cem`, `cma-es`.
 
 ## Acknowledgements
 
