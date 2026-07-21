@@ -46,6 +46,15 @@ class Args:
     friction: float = 0.5          # damping coefficient γ (0 = no friction, ∞ = overdamped)
     mass: float = 1.0              # effective mass (scales velocity inertia)
     velocity_clip: float = 2.0     # max velocity magnitude (prevents runaway)
+    # Adam-Langevin (SamAdams) adaptive stepsize
+    adam_langevin: bool = False
+    al_alpha: float = 1.0       # attack rate (EMA decay)
+    al_omega: float = 400.0     # monitor scale (≈ Hsample*Nu; normalizes schedule-corrected score norm)
+    al_m: float = 0.5           # min stepsize factor
+    al_M: float = 2.0           # max stepsize factor
+    al_r: float = 0.25          # power in Sundman kernel
+    al_s: float = 2.0           # power in monitor (2 = squared norm, Adam-like)
+    al_kernel: int = 2          # 1 = ψ^(1), 2 = ψ^(2)
     # Smoothness penalties
     smooth_fd: bool = False            # enable finite-difference smoothness penalty
     smooth_fd_weight: float = 0.1      # weight for FD penalty
@@ -60,6 +69,8 @@ def run_diffusion(args: Args):
         args.pid = True  # pid_schedule implies pid
     if args.pid and args.underdamped:
         raise ValueError("Cannot use both --pid and --underdamped. Choose one.")
+    if args.adam_langevin and (args.pid or args.underdamped):
+        raise ValueError("Cannot use --adam_langevin with --pid or --underdamped.")
 
     rng = jax.random.PRNGKey(seed=args.seed)
 
@@ -124,6 +135,8 @@ def run_diffusion(args: Args):
             i, rng, Ybar_i, I_accum, s_prev = carry
         elif args.underdamped:
             i, rng, Ybar_i, velocity = carry
+        elif args.adam_langevin:
+            i, rng, Ybar_i, zeta = carry
         else:
             i, rng, Ybar_i = carry
         Yi = Ybar_i * jnp.sqrt(alphas_bar[i])
@@ -202,6 +215,20 @@ def run_diffusion(args: Args):
             velocity_new = (1.0 - args.friction) * velocity + (1.0 / args.mass) * score_force
             velocity_new = jnp.clip(velocity_new, -args.velocity_clip, args.velocity_clip)
             Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + velocity_new)
+        elif args.adam_langevin:
+            score_norm = jnp.sqrt(jnp.sum(score ** 2) + 1e-12)
+            # Factor out noise-schedule magnitude so the monitor tracks
+            # reward-landscape difficulty, not diffusion step position.
+            schedule_norm = score_norm * (1.0 - alphas_bar[i])
+            g_val = (schedule_norm ** args.al_s) / args.al_omega
+            rho_half = jnp.exp(-args.al_alpha * 0.5)  # Δτ = 1
+            zeta_half = rho_half * zeta + (1.0 - rho_half) / args.al_alpha * g_val
+            if args.al_kernel == 1:
+                psi_val = args.al_m * (zeta_half ** args.al_r + args.al_M) / (zeta_half ** args.al_r + args.al_m)
+            else:
+                psi_val = args.al_m * (zeta_half ** args.al_r + args.al_M / args.al_m) / (zeta_half ** args.al_r + 1.0)
+            Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + psi_val * (1.0 - alphas_bar[i]) * score)
+            zeta_new = rho_half * zeta_half + (1.0 - rho_half) / args.al_alpha * g_val
         else:
             Yim1 = 1 / jnp.sqrt(alphas[i]) * (Yi + (1.0 - alphas_bar[i]) * score)
 
@@ -211,6 +238,8 @@ def run_diffusion(args: Args):
             return (i - 1, rng, Ybar_im1, I_new, score), rews.mean()
         elif args.underdamped:
             return (i - 1, rng, Ybar_im1, velocity_new), rews.mean()
+        elif args.adam_langevin:
+            return (i - 1, rng, Ybar_im1, zeta_new), rews.mean()
         else:
             return (i - 1, rng, Ybar_im1), rews.mean()
 
@@ -224,6 +253,8 @@ def run_diffusion(args: Args):
             s_prev = jnp.zeros_like(YN)
         elif args.underdamped:
             velocity = jnp.zeros_like(YN)
+        elif args.adam_langevin:
+            zeta = 0.0
         with tqdm(range(args.Ndiffuse - 1, 0, -1), desc="Diffusing") as pbar:
             for i in pbar:
                 if args.pid:
@@ -232,6 +263,9 @@ def run_diffusion(args: Args):
                 elif args.underdamped:
                     carry_once = (i, rng, Yi, velocity)
                     (i, rng, Yi, velocity), rew = reverse_once(carry_once, None)
+                elif args.adam_langevin:
+                    carry_once = (i, rng, Yi, zeta)
+                    (i, rng, Yi, zeta), rew = reverse_once(carry_once, None)
                 else:
                     carry_once = (i, rng, Yi)
                     (i, rng, Yi), rew = reverse_once(carry_once, None)
