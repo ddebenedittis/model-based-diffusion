@@ -34,6 +34,12 @@ class Args:
     beta0: float = 1e-4  # initial beta
     betaT: float = 1e-2  # final beta
     enable_demo: bool = False
+    # Adaptive Importance Sampling (MBD-AIS, Golembeski & Mazumdar RA-L 2025)
+    ais: bool = False           # replace the fixed Gaussian sampler with a CE adaptive importance sampler
+    ais_niter: int = 2          # cross-entropy adaptation iterations per diffusion step (Niter); 0 == standard MBD
+    ais_elite_frac: float = 0.1 # fraction of samples kept as elites each CE iteration (top-k mode)
+    ais_min_elite: int = 2      # floor on the number of elites (paper n_min)
+    ais_tau: float | None = None  # optional reward threshold for paper-faithful elite selection (None => top-k)
     # PID Langevin Dynamics
     pid: bool = False       # enable PID-controlled score update
     pid_schedule: Literal["none", "snr", "ess"] = "none"  # gain scheduling mode (implies --pid)
@@ -141,10 +147,25 @@ def run_diffusion(args: Args):
             i, rng, Ybar_i = carry
         Yi = Ybar_i * jnp.sqrt(alphas_bar[i])
 
-        # sample from q_i
+        def reward_fn(Y):
+            r, _ = jax.vmap(rollout_us, in_axes=(None, 0))(state_init, Y)
+            return r.mean(axis=-1)
+
+        # sample from q_i (optionally via CE adaptive importance sampling, MBD-AIS)
         rng, Y0s_rng = jax.random.split(rng)
-        eps_u = jax.random.normal(Y0s_rng, (args.Nsample, args.Hsample, Nu))
-        Y0s = eps_u * sigmas[i] + Ybar_i
+        if args.ais:
+            ns_iter, nfinal = mbd.ais.budget_split(args.Nsample, args.ais_niter)
+            mean_u, std_u, Y0s_rng = mbd.ais.ais_adapt(
+                Y0s_rng, Ybar_i, sigmas[i], reward_fn,
+                ns_iter, args.ais_niter,
+                elite_frac=args.ais_elite_frac, min_elite=args.ais_min_elite,
+                clip=(-1.0, 1.0), tau=args.ais_tau,
+            )
+            ndraw = nfinal
+        else:
+            mean_u, std_u, ndraw = Ybar_i, sigmas[i], args.Nsample
+        eps_u = jax.random.normal(Y0s_rng, (ndraw, args.Hsample, Nu))
+        Y0s = eps_u * std_u + mean_u
         Y0s = jnp.clip(Y0s, -1.0, 1.0)
 
         # esitimate mu_0tm1
